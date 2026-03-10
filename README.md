@@ -23,12 +23,12 @@ Panel putih yang ditambahkan di bawah gambar berisi:
 
 - **File `.env`**: Buat file `.env` di root folder dengan isi berikut:
   ```env
-  DB_HOST=34.50.82.149
-  DB_NAME=retail-intelligence
-  DB_USER=nodeuser
-  DB_PASS=rotikeju98
-  DB_PORT=5432
-  GCS_BUCKET_NAME=retail-intelligence-bucket
+  DB_HOST=<dbhost>
+  DB_NAME=<dbname>
+  DB_USER=<dbuser>
+  DB_PASS=<dbpassword>
+  DB_PORT=<dbport>
+  GCS_BUCKET_NAME=<bucketname>
   ```
 - **Di Compute Engine**: VM dengan service account yang memiliki peran `Storage Object Admin` pada bucket tersebut
 - **Di lokal**: Set environment variable `GOOGLE_APPLICATION_CREDENTIALS` ke path file JSON service account
