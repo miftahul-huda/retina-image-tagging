@@ -1,0 +1,14 @@
+# Python dependencies untuk image_tagger.py
+# Install dengan: pip3 install -r requirements.txt
+
+# Database PostgreSQL
+psycopg2-binary==2.9.9
+
+# Google Cloud Storage
+google-cloud-storage==2.18.2
+
+# Image processing
+Pillow==11.1.0
+
+# Environment variables
+python-dotenv==1.0.1
