@@ -64,11 +64,11 @@ REPO="retina-image-tagger"
 
 # Build untuk Service
 SERVICE_IMAGE="${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPO}/image-tagger-service:latest"
-gcloud builds submit --tag ${SERVICE_IMAGE} --config-file=Dockerfile.service .
+gcloud builds submit --config=cloudbuild-service.yaml --substitutions=_IMAGE_NAME=${SERVICE_IMAGE} .
 
 # Build untuk Job
 JOB_IMAGE="${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPO}/image-tagger-job:latest"
-gcloud builds submit --tag ${JOB_IMAGE} --config-file=Dockerfile.job .
+gcloud builds submit --config=cloudbuild-job.yaml --substitutions=_IMAGE_NAME=${JOB_IMAGE} .
 ```
 
 ### 2. Buat Cloud Run Job
