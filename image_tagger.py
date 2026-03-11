@@ -129,6 +129,34 @@ def fetch_records(conn, start_date: str, end_date: str) -> list[dict]:
     return [dict(r) for r in rows]
 
 
+def fetch_record_by_id(conn, record_id: int) -> dict | None:
+    """
+    Ambil satu record berdasarkan ID.
+    """
+    query = """
+        SELECT
+            u.id,
+            u.store_id,
+            u."createdAt",
+            u.uploaded_by_email,
+            u.uploaded_by_fullname,
+            u.uploaded_filename,
+            u.uploaded_filename_withinfo,
+            s.store_name,
+            s.store_city,
+            s.store_area,
+            s.store_branch,
+            s.store_region
+        FROM uploadfile u
+        JOIN store s ON s.storeid = u.store_id
+        WHERE u.id = %s
+    """
+    with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        cur.execute(query, (record_id,))
+        row = cur.fetchone()
+    return dict(row) if row else None
+
+
 def bulk_update_processed_records(conn, ids_list: list[int]):
     """
     Update massal kolom uploaded_filename_withinfo menggunakan regex berdasarkan list ID.
@@ -576,6 +604,79 @@ def run_tagging_process(start_date_str: str, end_date_str: str):
             "failed_count": failed,
             "skipped_count": skipped
         }
+    }
+
+
+def run_tagging_by_id(record_id: int):
+    """
+    Proses satu record berdasarkan ID.
+    """
+    print_separator("═")
+    print(f"  RETINA IMAGE TAGGER (SINGLE ID: {record_id})")
+    print(f"  Waktu mulai   : {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    print_separator("═")
+
+    # Koneksi database
+    print("\n→ Menghubungkan ke database PostgreSQL ...")
+    try:
+        conn = get_db_connection()
+        print("  ✓ Koneksi database berhasil.")
+    except Exception as e:
+        print(f"  ✗ Gagal terhubung ke database: {e}")
+        return {"status": "error", "message": f"DB connection failed: {e}"}
+
+    # Ambil data
+    print(f"\n→ Mengambil data untuk ID {record_id} ...")
+    try:
+        record = fetch_record_by_id(conn, record_id)
+        if not record:
+            print(f"  ✗ Record dengan ID {record_id} tidak ditemukan.")
+            conn.close()
+            return {"status": "error", "message": f"Record {record_id} not found"}
+    except Exception as e:
+        print(f"  ✗ Gagal mengambil data: {e}")
+        conn.close()
+        return {"status": "error", "message": f"Fetch record failed: {e}"}
+
+    # Koneksi GCS
+    print("\n→ Menginisialisasi Google Cloud Storage client ...")
+    try:
+        storage_client = storage.Client()
+        print("  ✓ GCS client berhasil diinisialisasi.")
+    except Exception as e:
+        print(f"  ✗ Gagal menginisialisasi GCS client: {e}")
+        conn.close()
+        return {"status": "error", "message": f"GCS client failed: {e}"}
+
+    # Variabel untuk statistik
+    success, failed, skipped = 0, 0, 0
+    processed_ids = []
+    start_proc_time = time.time()
+
+    # Proses gambar (reuse process_records dengan list berisi 1 record)
+    print()
+    try:
+        success, failed, skipped = process_records(
+            [record], storage_client, processed_ids, 0, 1, 1
+        )
+    finally:
+        # Lakukan update database massal di akhir
+        if processed_ids:
+            bulk_update_processed_records(conn, processed_ids)
+        conn.close()
+
+    end_proc_time = time.time()
+    duration_sec = int(end_proc_time - start_proc_time)
+    
+    print("\n" + "═"*70)
+    print(f"  HASIL AKHIR PROSES (ID: {record_id})")
+    print(f"  Berhasil      : {success}")
+    print(f"  Gagal         : {failed}")
+    print("═"*70 + "\n")
+
+    return {
+        "status": "success" if success > 0 else "failed",
+        "record_id": record_id
     }
 
 

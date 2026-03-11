@@ -129,7 +129,7 @@ uvicorn app:app --host 0.0.0.0 --port 8080 --reload
 `GET /health`
 Mengecek apakah server berjalan.
 
-#### 2. Trigger Tagging
+#### 2. Trigger Tagging (Range Tanggal)
 `GET /tag?start_date=YYYY-MM-DD&end_date=YYYY-MM-DD`
 
 **Parameter**:
@@ -139,11 +139,20 @@ Mengecek apakah server berjalan.
 **Response**:
 Server akan segera mengembalikan response sukses dan menjalankan proses tagging di **background**.
 
+#### 3. Trigger Tagging (Single ID)
+`GET /tag/{file_id}`
+
+**Parameter**:
+- `file_id`: ID unik record di database.
+
+**Response**:
+Server akan segera mengembalikan response sukses dan menjalankan proses tagging untuk ID tersebut di **background**.
+
 ```json
 {
   "status": "started",
-  "message": "Proses tagging untuk periode 2026-03-01 s/d 2026-03-31 telah dimulai di background.",
-  "timestamp": "2026-03-11T15:30:00.000000"
+  "message": "Proses tagging untuk ID 12345 telah dimulai di background.",
+  "timestamp": "2026-03-11T15:45:00.000000"
 }
 ```
 

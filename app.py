@@ -1,7 +1,7 @@
 from fastapi import FastAPI, BackgroundTasks, Query, HTTPException
 from datetime import datetime
 import os
-from image_tagger import run_tagging_process
+from image_tagger import run_tagging_process, run_tagging_by_id
 
 app = FastAPI(title="Retina Image Tagger API")
 
@@ -16,7 +16,7 @@ async def trigger_tagging(
     end_date: str = Query(..., description="Format: YYYY-MM-DD")
 ):
     """
-    Trigger proses image tagging di background.
+    Trigger proses image tagging di background untuk range tanggal.
     """
     # Validasi format tanggal sederhana
     try:
@@ -31,6 +31,23 @@ async def trigger_tagging(
     return {
         "status": "started",
         "message": f"Proses tagging untuk periode {start_date} s/d {end_date} telah dimulai di background.",
+        "timestamp": datetime.now().isoformat()
+    }
+
+@app.get("/tag/{file_id}")
+async def trigger_tagging_by_id(
+    file_id: int,
+    background_tasks: BackgroundTasks
+):
+    """
+    Trigger proses image tagging di background untuk satu file ID.
+    """
+    # Jalankan di background
+    background_tasks.add_task(run_tagging_by_id, file_id)
+
+    return {
+        "status": "started",
+        "message": f"Proses tagging untuk ID {file_id} telah dimulai di background.",
         "timestamp": datetime.now().isoformat()
     }
 
