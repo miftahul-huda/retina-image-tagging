@@ -53,19 +53,22 @@ chmod +x setup.sh
 
 ### 1. Build dan push Docker image ke Artifact Registry
 
+Pilih Dockerfile sesuai kebutuhan:
+- **`Dockerfile.service`**: Untuk Cloud Run Service (REST API)
+- **`Dockerfile.job`**: Untuk Cloud Run Jobs (CLI)
+
 ```bash
 PROJECT_ID="<your-gcp-project-id>"
 REGION="asia-southeast2"
 REPO="retina-image-tagger"
-IMAGE="${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPO}/image-tagger:latest"
 
-# Buat Artifact Registry repository (sekali)
-gcloud artifacts repositories create ${REPO} \
-  --repository-format=docker \
-  --location=${REGION}
+# Build untuk Service
+SERVICE_IMAGE="${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPO}/image-tagger-service:latest"
+gcloud builds submit --tag ${SERVICE_IMAGE} --config-file=Dockerfile.service .
 
-# Build & push image
-gcloud builds submit --tag ${IMAGE} .
+# Build untuk Job
+JOB_IMAGE="${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPO}/image-tagger-job:latest"
+gcloud builds submit --tag ${JOB_IMAGE} --config-file=Dockerfile.job .
 ```
 
 ### 2. Buat Cloud Run Job
