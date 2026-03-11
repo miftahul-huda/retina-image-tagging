@@ -110,6 +110,42 @@ Setiap task berjalan **independen** tanpa perlu koordinasi. Karena ada pengeceka
 
 ---
 
+## REST API (FastAPI)
+
+Selain sebagai CLI / Cloud Run Job, aplikasi ini juga bisa berjalan sebagai REST API.
+
+### Cara Menjalankan Lokal
+
+```bash
+uvicorn app:app --host 0.0.0.0 --port 8080 --reload
+```
+
+### Endpoint API
+
+#### 1. Health Check
+`GET /health`
+Mengecek apakah server berjalan.
+
+#### 2. Trigger Tagging
+`GET /tag?start_date=YYYY-MM-DD&end_date=YYYY-MM-DD`
+
+**Parameter**:
+- `start_date`: Tanggal awal (format YYYY-MM-DD)
+- `end_date`: Tanggal akhir (format YYYY-MM-DD)
+
+**Response**:
+Server akan segera mengembalikan response sukses dan menjalankan proses tagging di **background**.
+
+```json
+{
+  "status": "started",
+  "message": "Proses tagging untuk periode 2026-03-01 s/d 2026-03-31 telah dimulai di background.",
+  "timestamp": "2026-03-11T15:30:00.000000"
+}
+```
+
+---
+
 ## Cara Menjalankan
 
 ### Aktifkan virtual environment (jika menggunakan venv)

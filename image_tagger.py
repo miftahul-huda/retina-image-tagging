@@ -255,7 +255,7 @@ def add_info_panel(image_bytes: bytes, record: dict, source_format: str) -> byte
     lines = [
         ("Tanggal Upload   :", created_str),
         ("Diunggah Oleh    :", uploader_str),
-        ("Toko             :", store_str),
+        ("Outlet             :", store_str),
         ("Lokasi           :", location_str),
     ]
 
@@ -373,7 +373,7 @@ def process_records(
         prefix = f"[Task {task_index}]" if task_count > 1 else ""
         print(f"\n{prefix}[{task_record_idx} of {end_idx} from {total_all_records}] Memproses ...")
         print(f"  File      : {gcs_path}")
-        print(f"  Toko      : {store_name}")
+        print(f"  Outlet      : {store_name}")
         print(f"  Tanggal   : {created_at}")
 
         try:
@@ -457,15 +457,16 @@ def validate_date(date_str: str, label: str) -> datetime:
         sys.exit(1)
 
 
-def main():
-    args = parse_args()
-
-    start_dt = validate_date(args.start_date, "--start-date")
-    end_dt   = validate_date(args.end_date,   "--end-date")
+def run_tagging_process(start_date_str: str, end_date_str: str):
+    """
+    Fungsi utama yang bisa dipanggil dari API atau CLI.
+    """
+    start_dt = validate_date(start_date_str, "--start-date")
+    end_dt   = validate_date(end_date_str,   "--end-date")
 
     if start_dt > end_dt:
         print("ERROR: --start-date tidak boleh lebih besar dari --end-date.")
-        sys.exit(1)
+        return {"status": "error", "message": "start_date > end_date"}
 
     # Baca info task Cloud Run Jobs (jika tidak ada, task_index=0, task_count=1)
     task_index, task_count = get_task_info()
@@ -473,11 +474,11 @@ def main():
 
     print_separator("═")
     print("  RETINA IMAGE TAGGER")
-    print(f"  Filter Tanggal: {args.start_date} s/d {args.end_date}")
+    print(f"  Filter Tanggal: {start_date_str} s/d {end_date_str}")
     if is_cloud_run:
         print(f"  Mode          : Cloud Run Jobs (Task {task_index + 1}/{task_count})")
     else:
-        print(f"  Mode          : Single-task")
+        print(f"  Mode          : Service / Local")
     print(f"  Waktu mulai   : {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print_separator("═")
 
@@ -488,22 +489,22 @@ def main():
         print("  ✓ Koneksi database berhasil.")
     except Exception as e:
         print(f"  ✗ Gagal terhubung ke database: {e}")
-        sys.exit(1)
+        return {"status": "error", "message": f"DB connection failed: {e}"}
 
     # Ambil data
     print("\n→ Mengambil data dari database ...")
     try:
-        all_records = fetch_records(conn, args.start_date, args.end_date)
+        all_records = fetch_records(conn, start_date_str, end_date_str)
         print(f"  ✓ Ditemukan {len(all_records)} record total yang belum diproses.")
     except Exception as e:
         print(f"  ✗ Gagal mengambil data: {e}")
         conn.close()
-        sys.exit(1)
+        return {"status": "error", "message": f"Fetch records failed: {e}"}
 
     if not all_records:
         print("\n  Tidak ada data yang perlu diproses. Program selesai.")
         conn.close()
-        sys.exit(0)
+        return {"status": "success", "message": "No records to process"}
 
     # Bagi records ke task ini (idempotent berdasarkan urutan & modulo)
     records = split_records_for_task(all_records, task_index, task_count)
@@ -514,7 +515,7 @@ def main():
     if not records:
         print("\n  Tidak ada record untuk task ini. Program selesai.")
         conn.close()
-        sys.exit(0)
+        return {"status": "success", "message": "No records for this task"}
 
     # Koneksi GCS
     print("\n→ Menginisialisasi Google Cloud Storage client ...")
@@ -524,7 +525,7 @@ def main():
     except Exception as e:
         print(f"  ✗ Gagal menginisialisasi GCS client: {e}")
         conn.close()
-        sys.exit(1)
+        return {"status": "error", "message": f"GCS client failed: {e}"}
 
     # Variabel untuk statistik
     success, failed, skipped = 0, 0, 0
@@ -564,6 +565,23 @@ def main():
     print(f"  Gagal         : {failed}")
     print(f"  Dilewati      : {skipped}")
     print("═"*70 + "\n")
+
+    return {
+        "status": "success",
+        "details": {
+            "start_time": start_time_str,
+            "end_time": end_time_str,
+            "duration": duration_str,
+            "success_count": success,
+            "failed_count": failed,
+            "skipped_count": skipped
+        }
+    }
+
+
+def main():
+    args = parse_args()
+    run_tagging_process(args.start_date, args.end_date)
 
 
 if __name__ == "__main__":
