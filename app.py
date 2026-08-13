@@ -1,22 +1,79 @@
 from fastapi import FastAPI, BackgroundTasks, Query, HTTPException
+from pydantic import BaseModel, Field
 from datetime import datetime
 import os
 from image_tagger import run_tagging_process, run_tagging_by_id
 
-app = FastAPI(title="Retina Image Tagger API")
+app = FastAPI(
+    title="Retina Image Tagger API",
+    description=(
+        "API untuk memicu proses penambahan panel informasi (metadata) ke "
+        "gambar yang tersimpan di Google Cloud Storage.\n\n"
+        "Sumber gambar ditentukan otomatis berdasarkan `uploadfile.imageCategory`:\n"
+        "- Kategori biasa → dibaca/ditulis dari `uploadfile.uploaded_filename` "
+        "/ `uploadfile.uploaded_filename_withinfo`.\n"
+        "- `starter-package` → dibaca/ditulis dari `starterpackage.photoUrl` "
+        "/ `starterpackage.photoUrlWithInfo`.\n"
+        "- `voucherfisik` → dibaca/ditulis dari `\"voucherPackage\".photoUrl` "
+        "/ `\"voucherPackage\".photoUrlWithInfo`.\n\n"
+        "Setiap proses dijalankan secara asynchronous di background agar "
+        "request tidak timeout."
+    ),
+    version="1.0.0",
+    openapi_tags=[
+        {"name": "Health", "description": "Pengecekan status service."},
+        {"name": "Tagging", "description": "Memicu proses image tagging."},
+    ],
+)
 
-@app.get("/health")
+
+class HealthResponse(BaseModel):
+    status: str = Field(..., example="healthy")
+    timestamp: str = Field(..., example="2026-08-13T12:00:00.000000")
+
+
+class TagStartedResponse(BaseModel):
+    status: str = Field(..., example="started")
+    message: str = Field(
+        ...,
+        example="Proses tagging untuk periode 2026-08-01 s/d 2026-08-13 telah dimulai di background.",
+    )
+    timestamp: str = Field(..., example="2026-08-13T12:00:00.000000")
+
+
+class ErrorResponse(BaseModel):
+    detail: str = Field(..., example="Format tanggal tidak valid. Gunakan YYYY-MM-DD.")
+
+
+@app.get(
+    "/health",
+    tags=["Health"],
+    summary="Cek status service",
+    response_model=HealthResponse,
+    response_description="Service dalam keadaan sehat.",
+)
 def health_check():
+    """Endpoint sederhana untuk health check (liveness/readiness probe)."""
     return {"status": "healthy", "timestamp": datetime.now().isoformat()}
 
-@app.get("/tag")
+
+@app.get(
+    "/tag",
+    tags=["Tagging"],
+    summary="Trigger tagging untuk range tanggal",
+    response_model=TagStartedResponse,
+    response_description="Proses tagging berhasil dimulai di background.",
+    responses={400: {"model": ErrorResponse, "description": "Format tanggal tidak valid."}},
+)
 async def trigger_tagging(
     background_tasks: BackgroundTasks,
-    start_date: str = Query(..., description="Format: YYYY-MM-DD"),
-    end_date: str = Query(..., description="Format: YYYY-MM-DD")
+    start_date: str = Query(..., description="Tanggal awal filter createdAt.", example="2026-08-01"),
+    end_date: str = Query(..., description="Tanggal akhir filter createdAt (inklusif).", example="2026-08-13"),
 ):
     """
-    Trigger proses image tagging di background untuk range tanggal.
+    Trigger proses image tagging di background untuk semua record `uploadfile`
+    yang `createdAt`-nya berada pada rentang `start_date` s/d `end_date`
+    dan belum memiliki gambar ber-panel info.
     """
     # Validasi format tanggal sederhana
     try:
@@ -34,13 +91,24 @@ async def trigger_tagging(
         "timestamp": datetime.now().isoformat()
     }
 
-@app.get("/tag/{file_id}")
+
+@app.get(
+    "/tag/{file_id}",
+    tags=["Tagging"],
+    summary="Trigger tagging untuk satu uploadfile ID",
+    response_model=TagStartedResponse,
+    response_description="Proses tagging berhasil dimulai di background.",
+)
 async def trigger_tagging_by_id(
     file_id: int,
     background_tasks: BackgroundTasks
 ):
     """
-    Trigger proses image tagging di background untuk satu file ID.
+    Trigger proses image tagging di background untuk satu `uploadfile.id`.
+
+    Jika `imageCategory` record tersebut adalah `starter-package` atau
+    `voucherfisik`, seluruh foto terkait pada tabel `starterpackage` /
+    `"voucherPackage"` akan ikut diproses.
     """
     # Jalankan di background
     background_tasks.add_task(run_tagging_by_id, file_id)
@@ -50,6 +118,7 @@ async def trigger_tagging_by_id(
         "message": f"Proses tagging untuk ID {file_id} telah dimulai di background.",
         "timestamp": datetime.now().isoformat()
     }
+
 
 if __name__ == "__main__":
     import uvicorn

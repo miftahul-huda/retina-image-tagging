@@ -58,8 +58,8 @@ ACCENT_COLOR      = (0, 102, 204)     # warna aksen (judul baris)
 PADDING_X         = 30           # margin kiri teks
 PADDING_Y         = 30           # margin atas teks
 LINE_SPACING      = 75           # jarak antar baris (px)
-FONT_SIZE_LABEL   = 32
-FONT_SIZE_VALUE   = 32
+FONT_SIZE_LABEL   = 26
+FONT_SIZE_VALUE   = 26
 
 # Prioritas font: DejaVuSans (Linux/CE) → Arial (macOS) → default PIL
 FONT_CANDIDATES = [
@@ -96,8 +96,18 @@ def get_db_connection():
 def fetch_records(conn, start_date: str, end_date: str) -> list[dict]:
     """
     Ambil data dari tabel uploadfile JOIN store dengan filter tanggal
-    pada kolom createdAt. Hanya ambil record yang punya gambar (uploaded_filename
-    tidak NULL dan dimulai dengan 'gs://').
+    pada kolom createdAt. Hanya ambil record yang punya gambar.
+
+    Ada beberapa sumber gambar:
+    - Record biasa: gambar diambil dari uploadfile.uploaded_filename dan
+      hasilnya disimpan kembali ke uploadfile.uploaded_filename_withinfo.
+    - Record dengan imageCategory = 'starter-package': gambar diambil dari
+      starterpackage.photoUrl (via starterpackage.upload_file_id) dan
+      hasilnya disimpan ke starterpackage.photoUrlWithInfo.
+    - Record dengan imageCategory = 'voucherfisik': gambar diambil dari
+      "voucherPackage".photoUrl (via "voucherPackage".upload_file_id) dan
+      hasilnya disimpan ke "voucherPackage".photoUrlWithInfo.
+    Satu record uploadfile bisa punya beberapa foto starterpackage/voucherPackage.
     """
     query = """
         SELECT
@@ -106,13 +116,15 @@ def fetch_records(conn, start_date: str, end_date: str) -> list[dict]:
             u."createdAt",
             u.uploaded_by_email,
             u.uploaded_by_fullname,
-            u.uploaded_filename,
-            u.uploaded_filename_withinfo,
+            u.uploaded_filename AS source_path,
+            s.storeid,
             s.store_name,
             s.store_city,
             s.store_area,
             s.store_branch,
-            s.store_region
+            s.store_region,
+            'uploadfile' AS record_type,
+            u.id AS update_id
         FROM uploadfile u
         JOIN store s ON s.storeid = u.store_id
         WHERE
@@ -121,17 +133,83 @@ def fetch_records(conn, start_date: str, end_date: str) -> list[dict]:
             AND u.uploaded_filename IS NOT NULL
             AND u.uploaded_filename LIKE 'gs://%%'
             AND u.uploaded_filename_withinfo IS NULL
-        ORDER BY u."createdAt" ASC
+            AND u."imageCategory" IS DISTINCT FROM 'starter-package'
+            AND u."imageCategory" IS DISTINCT FROM 'voucherfisik'
+
+        UNION ALL
+
+        SELECT
+            u.id,
+            u.store_id,
+            u."createdAt",
+            u.uploaded_by_email,
+            u.uploaded_by_fullname,
+            sp."photoUrl" AS source_path,
+            s.storeid,
+            s.store_name,
+            s.store_city,
+            s.store_area,
+            s.store_branch,
+            s.store_region,
+            'starterpackage' AS record_type,
+            sp.id AS update_id
+        FROM starterpackage sp
+        JOIN uploadfile u ON u.id = sp.upload_file_id
+        JOIN store s ON s.storeid = u.store_id
+        WHERE
+            u."createdAt" >= %s::date
+            AND u."createdAt" < (%s::date + INTERVAL '1 day')
+            AND u."imageCategory" = 'starter-package'
+            AND sp."photoUrl" IS NOT NULL
+            AND sp."photoUrl" LIKE 'gs://%%'
+            AND sp."photoUrlWithInfo" IS NULL
+
+        UNION ALL
+
+        SELECT
+            u.id,
+            u.store_id,
+            u."createdAt",
+            u.uploaded_by_email,
+            u.uploaded_by_fullname,
+            vp."photoUrl" AS source_path,
+            s.storeid,
+            s.store_name,
+            s.store_city,
+            s.store_area,
+            s.store_branch,
+            s.store_region,
+            'voucherPackage' AS record_type,
+            vp.id AS update_id
+        FROM "voucherPackage" vp
+        JOIN uploadfile u ON u.id = vp.upload_file_id
+        JOIN store s ON s.storeid = u.store_id
+        WHERE
+            u."createdAt" >= %s::date
+            AND u."createdAt" < (%s::date + INTERVAL '1 day')
+            AND u."imageCategory" = 'voucherfisik'
+            AND vp."photoUrl" IS NOT NULL
+            AND vp."photoUrl" LIKE 'gs://%%'
+            AND vp."photoUrlWithInfo" IS NULL
+
+        ORDER BY "createdAt" ASC
     """
     with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-        cur.execute(query, (start_date, end_date))
+        cur.execute(
+            query,
+            (start_date, end_date, start_date, end_date, start_date, end_date),
+        )
         rows = cur.fetchall()
     return [dict(r) for r in rows]
 
 
-def fetch_record_by_id(conn, record_id: int) -> dict | None:
+def fetch_record_by_id(conn, record_id: int) -> list[dict]:
     """
-    Ambil satu record berdasarkan ID.
+    Ambil record untuk satu uploadfile ID.
+
+    Jika imageCategory record tersebut 'starter-package' atau 'voucherfisik',
+    kembalikan setiap foto starterpackage/voucherPackage yang terkait (bisa
+    lebih dari satu) alih-alih uploaded_filename milik uploadfile.
     """
     query = """
         SELECT
@@ -140,21 +218,66 @@ def fetch_record_by_id(conn, record_id: int) -> dict | None:
             u."createdAt",
             u.uploaded_by_email,
             u.uploaded_by_fullname,
-            u.uploaded_filename,
-            u.uploaded_filename_withinfo,
+            u.uploaded_filename AS source_path,
             s.store_name,
             s.store_city,
             s.store_area,
             s.store_branch,
-            s.store_region
+            s.store_region,
+            'uploadfile' AS record_type,
+            u.id AS update_id
         FROM uploadfile u
         JOIN store s ON s.storeid = u.store_id
         WHERE u.id = %s
+            AND u."imageCategory" IS DISTINCT FROM 'starter-package'
+            AND u."imageCategory" IS DISTINCT FROM 'voucherfisik'
+
+        UNION ALL
+
+        SELECT
+            u.id,
+            u.store_id,
+            u."createdAt",
+            u.uploaded_by_email,
+            u.uploaded_by_fullname,
+            sp."photoUrl" AS source_path,
+            s.store_name,
+            s.store_city,
+            s.store_area,
+            s.store_branch,
+            s.store_region,
+            'starterpackage' AS record_type,
+            sp.id AS update_id
+        FROM starterpackage sp
+        JOIN uploadfile u ON u.id = sp.upload_file_id
+        JOIN store s ON s.storeid = u.store_id
+        WHERE u.id = %s AND u."imageCategory" = 'starter-package'
+
+        UNION ALL
+
+        SELECT
+            u.id,
+            u.store_id,
+            u."createdAt",
+            u.uploaded_by_email,
+            u.uploaded_by_fullname,
+            vp."photoUrl" AS source_path,
+            s.store_name,
+            s.store_city,
+            s.store_area,
+            s.store_branch,
+            s.store_region,
+            'voucherPackage' AS record_type,
+            vp.id AS update_id
+        FROM "voucherPackage" vp
+        JOIN uploadfile u ON u.id = vp.upload_file_id
+        JOIN store s ON s.storeid = u.store_id
+        WHERE u.id = %s AND u."imageCategory" = 'voucherfisik'
     """
     with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-        cur.execute(query, (record_id,))
-        row = cur.fetchone()
-    return dict(row) if row else None
+        cur.execute(query, (record_id, record_id, record_id))
+        rows = cur.fetchall()
+    return [dict(r) for r in rows]
 
 
 def bulk_update_processed_records(conn, ids_list: list[int]):
@@ -169,7 +292,61 @@ def bulk_update_processed_records(conn, ids_list: list[int]):
         SET uploaded_filename_withinfo = regexp_replace(uploaded_filename, '(\\.[a-zA-Z0-9]+)$', '_with_info\\1')
         WHERE id = ANY(%s)
     """
-    print(f"\n→ Memperbarui database secara massal ({len(ids_list)} record) ...")
+    print(f"\n→ Memperbarui database secara massal ({len(ids_list)} record uploadfile) ...")
+    try:
+        with conn.cursor() as cur:
+            cur.execute(query, (ids_list,))
+            updated_count = cur.rowcount
+        conn.commit()
+        print(f"  ✓ Berhasil memperbarui {updated_count} record di database.")
+        return updated_count
+    except Exception as e:
+        print(f"  ✗ Gagal melakukan bulk update: {e}")
+        conn.rollback()
+        return 0
+
+
+def bulk_update_processed_starterpackage(conn, ids_list: list[int]):
+    """
+    Update massal kolom starterpackage.photoUrlWithInfo menggunakan regex
+    berdasarkan list starterpackage.id.
+    """
+    if not ids_list:
+        return 0
+
+    query = """
+        UPDATE starterpackage
+        SET "photoUrlWithInfo" = regexp_replace("photoUrl", '(\\.[a-zA-Z0-9]+)$', '_with_info\\1')
+        WHERE id = ANY(%s)
+    """
+    print(f"\n→ Memperbarui database secara massal ({len(ids_list)} record starterpackage) ...")
+    try:
+        with conn.cursor() as cur:
+            cur.execute(query, (ids_list,))
+            updated_count = cur.rowcount
+        conn.commit()
+        print(f"  ✓ Berhasil memperbarui {updated_count} record di database.")
+        return updated_count
+    except Exception as e:
+        print(f"  ✗ Gagal melakukan bulk update: {e}")
+        conn.rollback()
+        return 0
+
+
+def bulk_update_processed_voucherpackage(conn, ids_list: list[int]):
+    """
+    Update massal kolom "voucherPackage".photoUrlWithInfo menggunakan regex
+    berdasarkan list "voucherPackage".id.
+    """
+    if not ids_list:
+        return 0
+
+    query = """
+        UPDATE "voucherPackage"
+        SET "photoUrlWithInfo" = regexp_replace("photoUrl", '(\\.[a-zA-Z0-9]+)$', '_with_info\\1')
+        WHERE id = ANY(%s)
+    """
+    print(f"\n→ Memperbarui database secara massal ({len(ids_list)} record voucherPackage) ...")
     try:
         with conn.cursor() as cur:
             cur.execute(query, (ids_list,))
@@ -272,7 +449,10 @@ def add_info_panel(image_bytes: bytes, record: dict, source_format: str) -> byte
         record.get("uploaded_by_fullname") or "-",
         record.get("uploaded_by_email") or "-",
     )
-    store_str     = record.get("store_name") or "-"
+    store_str     = "{} ({})".format(
+        record.get("store_name") or "-",
+        record.get("storeid") or "-",
+    )
     location_str  = "{}, {}, {}, {}".format(
         record.get("store_city") or "-",
         record.get("store_region") or "-",
@@ -281,16 +461,16 @@ def add_info_panel(image_bytes: bytes, record: dict, source_format: str) -> byte
     )
 
     lines = [
-        ("Tanggal Upload   :", created_str),
-        ("Diunggah Oleh    :", uploader_str),
-        ("Outlet             :", store_str),
-        ("Lokasi           :", location_str),
+        ("Upload Date   :", created_str),
+        ("By :", uploader_str),
+        ("Outlet :", store_str),
+        ("Location :", location_str),
     ]
 
     # Gambar teks pada panel putih
     text_y = orig_h + 10 + PADDING_Y
     col_label_x = PADDING_X
-    col_value_x = PADDING_X + 380   # offset kolom nilai
+    col_value_x = PADDING_X + 220   # offset kolom nilai
 
     for label, value in lines:
         draw.text((col_label_x, text_y), label, font=font_label, fill=ACCENT_COLOR)
@@ -367,7 +547,7 @@ def split_records_for_task(records: list[dict], task_index: int, task_count: int
 def process_records(
     records: list[dict],
     storage_client: storage.Client,
-    processed_ids: list[int],
+    processed_ids: dict,
     task_index: int = 0,
     task_count: int = 1,
     total_all_records: int = 0,
@@ -392,14 +572,18 @@ def process_records(
     print_separator()
 
     for idx, record in enumerate(records, start=1):
-        gcs_path  = record.get("uploaded_filename", "")
-        store_name = record.get("store_name") or "-"
+        gcs_path   = record.get("source_path", "")
+        record_type = record.get("record_type", "uploadfile")
+        store_name = "{} ({})".format(
+            record.get("store_name") or "-",
+            record.get("storeid") or "-",
+        )
         created_at = format_created_at(record.get("createdAt"))
         # Tampilkan informasi task jika dalam mode multitask
 
         task_record_idx = idx + (task_index * total)
         prefix = f"[Task {task_index}]" if task_count > 1 else ""
-        print(f"\n{prefix}[{task_record_idx} of {end_idx} from {total_all_records}] Memproses ...")
+        print(f"\n{prefix}[{task_record_idx} of {end_idx} from {total_all_records}] Memproses ({record_type}) ...")
         print(f"  File      : {gcs_path}")
         print(f"  Outlet      : {store_name}")
         print(f"  Tanggal   : {created_at}")
@@ -430,7 +614,7 @@ def process_records(
             )
 
             print(f"  ✓  Selesai → {output_gcs_path}")
-            processed_ids.append(record["id"])
+            processed_ids.setdefault(record_type, []).append(record["update_id"])
             success += 1
 
         except Exception as e:
@@ -458,7 +642,7 @@ def parse_args():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Contoh:
-  python3 image_tagger.py --start-date 2025-06-01 --end-date 2025-06-30
+    
   python3 image_tagger.py --start-date 2025-01-01 --end-date 2025-12-31
         """,
     )
@@ -557,7 +741,7 @@ def run_tagging_process(start_date_str: str, end_date_str: str):
 
     # Variabel untuk statistik
     success, failed, skipped = 0, 0, 0
-    processed_ids = []
+    processed_ids = {"uploadfile": [], "starterpackage": [], "voucherPackage": []}
     start_proc_time = time.time()
     start_time_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     total_all_records = len(all_records)
@@ -570,8 +754,12 @@ def run_tagging_process(start_date_str: str, end_date_str: str):
         )
     finally:
         # Lakukan update database massal di akhir (atau jika interupsi)
-        if processed_ids:
-            bulk_update_processed_records(conn, processed_ids)
+        if processed_ids["uploadfile"]:
+            bulk_update_processed_records(conn, processed_ids["uploadfile"])
+        if processed_ids["starterpackage"]:
+            bulk_update_processed_starterpackage(conn, processed_ids["starterpackage"])
+        if processed_ids["voucherPackage"]:
+            bulk_update_processed_voucherpackage(conn, processed_ids["voucherPackage"])
         conn.close()
 
     end_proc_time = time.time()
@@ -628,8 +816,8 @@ def run_tagging_by_id(record_id: int):
     # Ambil data
     print(f"\n→ Mengambil data untuk ID {record_id} ...")
     try:
-        record = fetch_record_by_id(conn, record_id)
-        if not record:
+        records = fetch_record_by_id(conn, record_id)
+        if not records:
             print(f"  ✗ Record dengan ID {record_id} tidak ditemukan.")
             conn.close()
             return {"status": "error", "message": f"Record {record_id} not found"}
@@ -650,19 +838,24 @@ def run_tagging_by_id(record_id: int):
 
     # Variabel untuk statistik
     success, failed, skipped = 0, 0, 0
-    processed_ids = []
+    processed_ids = {"uploadfile": [], "starterpackage": [], "voucherPackage": []}
     start_proc_time = time.time()
 
-    # Proses gambar (reuse process_records dengan list berisi 1 record)
+    # Proses gambar (reuse process_records; bisa lebih dari satu foto
+    # jika record ini adalah imageCategory 'starter-package')
     print()
     try:
         success, failed, skipped = process_records(
-            [record], storage_client, processed_ids, 0, 1, 1
+            records, storage_client, processed_ids, 0, 1, len(records)
         )
     finally:
         # Lakukan update database massal di akhir
-        if processed_ids:
-            bulk_update_processed_records(conn, processed_ids)
+        if processed_ids["uploadfile"]:
+            bulk_update_processed_records(conn, processed_ids["uploadfile"])
+        if processed_ids["starterpackage"]:
+            bulk_update_processed_starterpackage(conn, processed_ids["starterpackage"])
+        if processed_ids["voucherPackage"]:
+            bulk_update_processed_voucherpackage(conn, processed_ids["voucherPackage"])
         conn.close()
 
     end_proc_time = time.time()
