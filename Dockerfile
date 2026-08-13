@@ -15,6 +15,5 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
-# Default command: jalankan FastAPI server
-# Untuk Cloud Run Jobs, ganti command/entrypoint saat execute atau di gcloud run jobs create
-CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8080"]
+# ENTRYPOINT untuk Cloud Run Jobs (CLI mode)
+ENTRYPOINT ["python", "image_tagger.py"]

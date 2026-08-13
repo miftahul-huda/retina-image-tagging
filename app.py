@@ -1,8 +1,9 @@
 from fastapi import FastAPI, BackgroundTasks, Query, HTTPException
 from pydantic import BaseModel, Field
 from datetime import datetime
+from typing import Optional
 import os
-from image_tagger import run_tagging_process, run_tagging_by_id
+from image_tagger import run_tagging_process, run_tagging_by_id, default_date_range
 
 app = FastAPI(
     title="Retina Image Tagger API",
@@ -67,14 +68,25 @@ def health_check():
 )
 async def trigger_tagging(
     background_tasks: BackgroundTasks,
-    start_date: str = Query(..., description="Tanggal awal filter createdAt.", example="2026-08-01"),
-    end_date: str = Query(..., description="Tanggal akhir filter createdAt (inklusif).", example="2026-08-13"),
+    start_date: Optional[str] = Query(
+        None, description="Tanggal awal filter createdAt. Default: kemarin.", example="2026-08-01"
+    ),
+    end_date: Optional[str] = Query(
+        None, description="Tanggal akhir filter createdAt (inklusif). Default: besok.", example="2026-08-13"
+    ),
 ):
     """
     Trigger proses image tagging di background untuk semua record `uploadfile`
     yang `createdAt`-nya berada pada rentang `start_date` s/d `end_date`
     dan belum memiliki gambar ber-panel info.
+
+    Jika `start_date`/`end_date` tidak diisi, default ke kemarin s/d besok.
     """
+    # Isi default jika tidak diberikan
+    default_start, default_end = default_date_range()
+    start_date = start_date or default_start
+    end_date = end_date or default_end
+
     # Validasi format tanggal sederhana
     try:
         datetime.strptime(start_date, "%Y-%m-%d")

@@ -20,7 +20,7 @@ import os
 import sys
 import traceback
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import psycopg2
 import psycopg2.extras
@@ -648,14 +648,16 @@ Contoh:
     )
     parser.add_argument(
         "--start-date",
-        required=True,
-        help="Tanggal awal filter createdAt (format: YYYY-MM-DD)",
+        required=False,
+        default=None,
+        help="Tanggal awal filter createdAt (format: YYYY-MM-DD). Default: kemarin.",
         metavar="YYYY-MM-DD",
     )
     parser.add_argument(
         "--end-date",
-        required=True,
-        help="Tanggal akhir filter createdAt (format: YYYY-MM-DD, inklusif)",
+        required=False,
+        default=None,
+        help="Tanggal akhir filter createdAt (format: YYYY-MM-DD, inklusif). Default: besok.",
         metavar="YYYY-MM-DD",
     )
     return parser.parse_args()
@@ -669,10 +671,23 @@ def validate_date(date_str: str, label: str) -> datetime:
         sys.exit(1)
 
 
-def run_tagging_process(start_date_str: str, end_date_str: str):
+def default_date_range() -> tuple[str, str]:
+    """Kembalikan (start_date, end_date) default: kemarin s/d besok (format YYYY-MM-DD)."""
+    today = datetime.now().date()
+    return (today - timedelta(days=1)).isoformat(), (today + timedelta(days=1)).isoformat()
+
+
+def run_tagging_process(start_date_str: str | None = None, end_date_str: str | None = None):
     """
     Fungsi utama yang bisa dipanggil dari API atau CLI.
+    Jika start_date_str/end_date_str tidak diisi, default ke kemarin s/d besok.
     """
+    if not start_date_str or not end_date_str:
+        default_start, default_end = default_date_range()
+        start_date_str = start_date_str or default_start
+        end_date_str = end_date_str or default_end
+        print(f"  (i) --start-date/--end-date tidak diberikan, menggunakan default: {start_date_str} s/d {end_date_str}")
+
     start_dt = validate_date(start_date_str, "--start-date")
     end_dt   = validate_date(end_date_str,   "--end-date")
 
